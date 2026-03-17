@@ -4,6 +4,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
 
 import Login from "@/pages/Login";
+import Register from "@/pages/Register";
 import Overview from "@/pages/Overview";
 import Leads from "@/pages/Leads";
 import Pipeline from "@/pages/Pipeline";
@@ -22,6 +23,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
           <Route element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
             <Route path="/overview" element={<Overview />} />
