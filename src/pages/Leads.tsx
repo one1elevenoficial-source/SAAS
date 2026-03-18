@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, MoreHorizontal, Phone, Clock, AlertTriangle } from 'lucide-react';
+import { Search, MoreHorizontal, Phone, Clock } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -23,10 +22,8 @@ import {
 import { cn } from '@/lib/utils';
 import { isDemoMode } from '@/lib/demoMode';
 import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 
-/**
- * UI Lead shape (compatível com seu DataTable atual)
- */
 type UIStage =
   | 'novo'
   | 'qualificando'
@@ -45,7 +42,6 @@ type LeadUI = {
   lastMessage?: string | null;
   lastMessageAt?: string | null;
   responsible?: string | null;
-  // campos extras vindos do banco (não atrapalham)
   status?: string | null;
   created_at?: string | null;
 };
@@ -68,101 +64,51 @@ const stageLabels: Record<UIStage, string> = {
   perdido: 'Perdido',
 };
 
-// status do banco (PT-BR) -> stage do UI
 function statusToStage(statusRaw: any): UIStage {
   const s = String(statusRaw || '').trim().toLowerCase();
-
-  // PT-BR que você já está usando no banco
   if (s === 'novo') return 'novo';
-  if (s === 'qualificando') return 'qualificando';
-  if (s === 'qualificado') return 'qualificando';
+  if (s === 'qualificando' || s === 'qualificado' || s === 'em atendimento') return 'qualificando';
   if (s === 'proposta') return 'proposta';
-  if (s === 'follow-up' || s === 'follow up' || s === 'followup') return 'follow-up';
-  if (s === 'agendado') return 'follow-up';       // UI não tem “Agendado” -> joga no follow-up
-  if (s === 'fechado') return 'ganhou';           // UI não tem “Fechado” -> ganhou
-  if (s === 'ganhou') return 'ganhou';
+  if (s === 'follow-up' || s === 'follow up' || s === 'followup' || s === 'agendado') return 'follow-up';
+  if (s === 'fechado' || s === 'ganhou' || s === 'convertido' || s === 'vendido') return 'ganhou';
   if (s === 'perdido') return 'perdido';
-
-  // fallback seguro
   return 'novo';
-}
-
-async function apiGetLeads(workspaceId: string): Promise<LeadUI[]> {
-  const base = String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-  const token = String(import.meta.env.VITE_API_TOKEN || '');
-
-  if (!base) throw new Error('VITE_API_BASE_URL ausente');
-  if (!token) throw new Error('VITE_API_TOKEN ausente');
-  if (!workspaceId) throw new Error('workspaceId ausente');
-
-  const r = await fetch(`${base}/api/leads`, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-token': token,
-      'workspace_id': workspaceId,
-    },
-  });
-
-  const json = await r.json().catch(() => null);
-
-  if (!r.ok || !json?.ok) {
-    const msg = json?.error || `HTTP_${r.status}`;
-    throw new Error(msg);
-  }
-
-  const rows = Array.isArray(json.data) ? json.data : [];
-
-  // Converte para o modelo do UI sem inventar “dados fake”
-  return rows.map((l: any) => {
-    const name = String(l?.name || '').trim() || 'Sem nome';
-    const phone = String(l?.phone || '').trim() || '-';
-    const status = l?.status ?? l?.stage ?? 'Novo';
-
-    const out: LeadUI = {
-      id: String(l?.id),
-      name,
-      phone,
-      stage: statusToStage(status),
-      status: String(status || ''),
-      created_at: l?.created_at ?? null,
-
-      // campos que o layout mostra mas o banco não tem (mantém neutro, não fake)
-      source: l?.source ?? null,
-      score: l?.score ?? null,
-      lastMessage: l?.lastMessage ?? null,
-      lastMessageAt: l?.lastMessageAt ?? null,
-      responsible: l?.responsible ?? null,
-    };
-
-    return out;
-  });
 }
 
 export default function Leads() {
   const { currentWorkspace } = useWorkspace();
-
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
 
-  const {
-    data: allLeads = [],
-    isLoading,
-    isError,
-    error,
-    refetch,
-  } = useQuery({
+  const { data: rawLeads = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['leads', currentWorkspace?.id],
     queryFn: async () => {
-      // Se demo mode estiver ligado explicitamente, não chama API
       if (isDemoMode) return [];
-      return apiGetLeads(String(currentWorkspace?.id || ''));
+      const r = await api.leads();
+      if (!r.ok) throw new Error(r.error);
+      return r.data ?? [];
     },
     enabled: Boolean(currentWorkspace?.id),
     staleTime: 10_000,
     retry: 1,
   });
+
+  const allLeads: LeadUI[] = useMemo(() => {
+    return (rawLeads as any[]).map((l) => ({
+      id: String(l?.id),
+      name: String(l?.name || '').trim() || 'Sem nome',
+      phone: String(l?.phone || '').trim() || '-',
+      stage: statusToStage(l?.status ?? l?.stage ?? 'Novo'),
+      status: String(l?.status || ''),
+      created_at: l?.created_at ?? null,
+      source: l?.source ?? null,
+      score: l?.score ?? null,
+      lastMessage: l?.last_message ?? l?.lastMessage ?? null,
+      lastMessageAt: l?.last_message_at ?? l?.lastMessageAt ?? null,
+      responsible: l?.responsible ?? null,
+    }));
+  }, [rawLeads]);
 
   const filteredLeads = useMemo(() => {
     return allLeads.filter((lead) => {
@@ -227,7 +173,7 @@ export default function Leads() {
     },
     {
       key: 'stage',
-      header: 'Stage',
+      header: 'Estágio',
       render: (item: LeadUI) => (
         <Badge variant="outline" className={cn('border', stageColors[item.stage])}>
           {stageLabels[item.stage]}
@@ -236,7 +182,7 @@ export default function Leads() {
     },
     {
       key: 'source',
-      header: 'Source',
+      header: 'Origem',
       render: (item: LeadUI) => (
         <span className="text-muted-foreground text-sm">{item.source || '-'}</span>
       ),
@@ -261,22 +207,15 @@ export default function Leads() {
     },
     {
       key: 'lastMessage',
-      header: 'Last Message',
+      header: 'Última Mensagem',
       render: (item: LeadUI) => (
         <div className="max-w-[200px]">
           <p className="text-sm text-foreground truncate">{item.lastMessage || '-'}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="w-3 h-3" />
-            {item.lastMessageAt || '-'}
+            {item.lastMessageAt ? new Date(item.lastMessageAt).toLocaleDateString('pt-BR') : '-'}
           </div>
         </div>
-      ),
-    },
-    {
-      key: 'responsible',
-      header: 'Responsible',
-      render: (item: LeadUI) => (
-        <span className="text-sm text-muted-foreground">{item.responsible || '-'}</span>
       ),
     },
     {
@@ -291,10 +230,9 @@ export default function Leads() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="bg-popover border-border">
-            <DropdownMenuItem>View Details</DropdownMenuItem>
-            <DropdownMenuItem>Start Follow-up</DropdownMenuItem>
-            <DropdownMenuItem>Move to Pipeline</DropdownMenuItem>
-            <DropdownMenuItem>Assign to</DropdownMenuItem>
+            <DropdownMenuItem>Ver Detalhes</DropdownMenuItem>
+            <DropdownMenuItem>Iniciar Follow-up</DropdownMenuItem>
+            <DropdownMenuItem>Mover para Pipeline</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ),
@@ -309,7 +247,6 @@ export default function Leads() {
           <p className="text-muted-foreground mt-1">
             {isLoading ? 'Carregando...' : `${filteredLeads.length} leads encontrados`}
           </p>
-
           {isError && (
             <div className="mt-2 text-sm text-destructive">
               Falhou ao carregar leads: {String((error as any)?.message || 'erro')}
@@ -318,51 +255,14 @@ export default function Leads() {
               </button>
             </div>
           )}
-
-          {isDemoMode && (
-            <div className="mt-2 text-sm text-warning">
-              DEMO MODE está ligado via VITE_DEMO_MODE=true
-            </div>
-          )}
         </div>
       </div>
-
-      {/* ── RADAR DE PERDA ───────────────────────────────────── */}
-      {(() => {
-        const atRisk = (allLeads as any[]).filter((l) => {
-          if (!l.lastMessageAt) return true;
-          const hours = (Date.now() - new Date(l.lastMessageAt).getTime()) / 3600000;
-          return hours > 24 && !["ganhou", "perdido"].includes(l.stage || "");
-        });
-        if (atRisk.length === 0) return null;
-        return (
-          <Card className="bg-destructive/5 border border-destructive/30">
-            <CardContent className="py-4">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0" />
-                <div className="flex-1">
-                  <p className="font-semibold text-destructive text-sm">
-                    ⚠️ {atRisk.length} lead{atRisk.length > 1 ? "s" : ""} em risco de perda
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Sem resposta há mais de 24h: {atRisk.slice(0, 3).map((l: any) => l.name || "Lead").join(", ")}
-                    {atRisk.length > 3 ? ` e mais ${atRisk.length - 3}` : ""}
-                  </p>
-                </div>
-                <Button size="sm" variant="destructive" className="flex-shrink-0">
-                  Ver agora
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })()}
 
       <div className="flex flex-wrap items-center gap-4">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name or phone..."
+            placeholder="Buscar por nome ou telefone..."
             className="pl-10 bg-secondary border-border"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -371,10 +271,10 @@ export default function Leads() {
 
         <Select value={stageFilter} onValueChange={setStageFilter}>
           <SelectTrigger className="w-[180px] bg-secondary border-border">
-            <SelectValue placeholder="Filter by stage" />
+            <SelectValue placeholder="Filtrar por estágio" />
           </SelectTrigger>
           <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All Stages</SelectItem>
+            <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="novo">Novo</SelectItem>
             <SelectItem value="qualificando">Qualificando</SelectItem>
             <SelectItem value="proposta">Proposta</SelectItem>
@@ -386,15 +286,12 @@ export default function Leads() {
 
         {selectedLeads.length > 0 && (
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-sm text-muted-foreground">{selectedLeads.length} selected</span>
+            <span className="text-sm text-muted-foreground">{selectedLeads.length} selecionados</span>
             <Button variant="outline" size="sm" className="border-border text-muted-foreground">
-              Start Follow-up
+              Iniciar Follow-up
             </Button>
             <Button variant="outline" size="sm" className="border-border text-muted-foreground">
-              Move Stage
-            </Button>
-            <Button variant="outline" size="sm" className="border-border text-muted-foreground">
-              Assign
+              Mover Estágio
             </Button>
           </div>
         )}
