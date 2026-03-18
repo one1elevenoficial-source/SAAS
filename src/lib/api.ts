@@ -1,5 +1,5 @@
-// src/lib/api.ts
 import { ensureTenantInitialized, getTenant } from "@/lib/tenant";
+import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = String((import.meta as any).env?.VITE_API_BASE_URL || "").trim();
 
@@ -22,21 +22,36 @@ export type Message = {
   [k: string]: any;
 };
 
-function buildHeaders() {
+async function buildHeaders() {
   ensureTenantInitialized();
   const t = getTenant();
   const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (t.token)       h["x-api-token"]  = t.token;
-  if (t.workspaceId) h["workspace_id"] = t.workspaceId;
+
+  if (t.token) {
+    h["x-api-token"] = t.token;
+  }
+  if (t.workspaceId) {
+    h["workspace_id"] = t.workspaceId;
+  }
+
+  // Se não tiver token da API, usa JWT do Supabase como fallback
+  if (!t.token) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      h["Authorization"] = `Bearer ${session.access_token}`;
+    }
+  }
+
   return h;
 }
 
 async function request<T>(path: string, opts?: { method?: string; body?: any }): Promise<ApiResult<T>> {
   try {
     if (!API_BASE_URL) return { ok: false, error: "MISSING_VITE_API_BASE_URL" };
+    const headers = await buildHeaders();
     const res = await fetch(`${API_BASE_URL}${path}`, {
       method: opts?.method || "GET",
-      headers: buildHeaders(),
+      headers,
       body: opts?.body ? JSON.stringify(opts.body) : undefined,
     });
     const json = await res.json().catch(() => null);
