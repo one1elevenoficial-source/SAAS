@@ -1,12 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL =
-  import.meta.env.VITE_SUPABASE_URL ?? "https://pdrbdpzquhidojirkmcv.supabase.co";
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+import { supabase } from "@/lib/supabase";
 
 type FormState = {
   fullName: string;
@@ -179,12 +173,6 @@ export default function Register() {
     setSuccessMsg(null);
 
     try {
-      if (!SUPABASE_ANON_KEY) {
-        throw new Error(
-          "Faltou configurar VITE_SUPABASE_ANON_KEY no .env (não posso criar usuário sem a anon key)."
-        );
-      }
-
       const full_name = form.fullName.trim();
       const email = form.email.trim().toLowerCase();
       const password = form.password;
@@ -204,9 +192,8 @@ export default function Register() {
 
       // Se sua configuração exigir confirmação por email, às vezes o user vem null
       if (!userId) {
-        setSuccessMsg(
-          "Cadastro iniciado. Verifique seu email para confirmar a conta e depois faça login."
-        );
+        // Sem userId = email não confirmado ainda, redireciona pro login
+        navigate("/login", { replace: true });
         return;
       }
 
@@ -236,8 +223,16 @@ export default function Register() {
 
       if (profileError) throw profileError;
 
-      // 4) sucesso → overview
-      navigate("/overview", { replace: true });
+      // Faz login automático após cadastro
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) {
+        navigate("/login", { replace: true });
+      } else {
+        navigate("/overview", { replace: true });
+      }
     } catch (err: any) {
       const msg =
         err?.message ||
