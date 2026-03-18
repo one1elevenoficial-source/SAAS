@@ -46,18 +46,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: data.role ?? "member",
       };
 
-      // Carrega o api_token do workspace e salva no localStorage/contexto
-      const { data: tokenData } = await supabase
-        .from("api_tokens")
-        .select("token")
-        .eq("workspace_id", data.workspace_id)
-        .eq("is_active", true)
-        .maybeSingle();
+      try {
+        const { data: tokenData } = await supabase
+          .from("api_tokens")
+          .select("token")
+          .eq("workspace_id", data.workspace_id)
+          .eq("is_active", true)
+          .maybeSingle();
 
-      setTenant({
-        workspaceId: p.workspace_id,
-        token: tokenData?.token ?? "",
-      });
+        setTenant({
+          workspaceId: p.workspace_id,
+          token: tokenData?.token ?? "",
+        });
+      } catch {
+        setTenant({ workspaceId: p.workspace_id, token: "" });
+      }
 
       return p;
     } catch {
@@ -68,34 +71,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    async function init() {
-      const {
-        data: { session: s },
-      } = await supabase.auth.getSession();
-      if (!mounted) return;
+    const timeout = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 5000);
 
-      if (s?.user) {
-        setSession(s);
-        setUser(s.user);
-        const p = await loadProfile(s.user.id, s.user.email ?? "");
-        if (mounted) setProfile(p);
+    async function init() {
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        if (s?.user) {
+          setSession(s);
+          setUser(s.user);
+          const p = await loadProfile(s.user.id, s.user.email ?? "");
+          if (mounted) setProfile(p);
+        }
+      } catch {
+        // ignora erro
+      } finally {
+        if (mounted) {
+          clearTimeout(timeout);
+          setLoading(false);
+        }
       }
-      setLoading(false);
     }
 
     init();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, s) => {
       if (!mounted) return;
 
       if (event === "SIGNED_IN" && s?.user) {
         setSession(s);
         setUser(s.user);
         const p = await loadProfile(s.user.id, s.user.email ?? "");
-        if (mounted) setProfile(p);
-        setLoading(false);
+        if (mounted) {
+          setProfile(p);
+          setLoading(false);
+        }
       }
 
       if (event === "SIGNED_OUT") {
@@ -114,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
+      clearTimeout(timeout);
       subscription.unsubscribe();
     };
   }, []);
